@@ -130,5 +130,5 @@ op_x_operand1_cp     = 100.00%
 
 ## Author
 
-**[Your Name]**  
+**[Tala Alhendi]**  
 Computer Engineering — An-Najah National University

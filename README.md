@@ -2,7 +2,7 @@
 
 **Course:** VLSI Design Verification  
 **University:** An-Najah National University — Computer Engineering Department  
-**Assignment:** #11 — Final Assignment: Functional Coverage  
+**Assignment:** Final Assignment: Functional Coverage  
 
 ---
 

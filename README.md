@@ -1,134 +1,70 @@
-# ALU Functional Coverage Testbench — VLSI Design Verification
+# Register Controller Verification Testbench — VLSI Design Verification
 
-**Course:** VLSI Design Verification  
-**University:** An-Najah National University — Computer Engineering Department  
-**Assignment:** Final Assignment: Functional Coverage  
-
----
+**Course:** VLSI Design Verification — Final Assignment (Functional Coverage)
+**University:** An-Najah National University — Computer Engineering Department
+**Author:** Tala Alhendi
 
 ## Overview
 
-This project implements a **constraint-random SystemVerilog testbench** for a 32×32→64-bit signed ALU. It demonstrates a complete UVM-style verification environment with functional coverage, a scoreboard (checker), and a structured three-class stimulus pipeline.
+This project implements a constraint-random SystemVerilog testbench for a **black-box register controller (`reg_ctrl`)** DUT. The DUT is a memory-mapped register file with an **accumulate feature**: writes can either overwrite a location directly, or accumulate into it using **add** or **multiply**, selected by the `acc` and `func` control signals.
 
-The testbench verifies the following ALU operations:
+The testbench follows a layered architecture (Generator → Driver → Monitor → Checker/Scoreboard, plus a dedicated Coverage component) and drives the DUT using **pseudo-random, constraint-weighted stimulus only** — no hard-coded/directed test values.
 
-| Opcode | Operation |
-|--------|-----------|
-| `ADD`  | Signed 32-bit addition → 64-bit result |
-| `SUB`  | Signed 32-bit subtraction → 64-bit result |
-| `MULT` | Signed 32-bit multiplication → 64-bit result |
-| `DIV`  | Signed 32-bit division → 64-bit result (0 on divide-by-zero) |
+## DUT Interface
 
----
+| Signal | Direction | Description |
+|---|---|---|
+| `addr` | in | 8-bit address (256 locations) |
+| `sel` | in | Select / start transaction |
+| `wr` | in | Write enable |
+| `acc` | in | Accumulate enable |
+| `func` | in | Accumulate mode: 0 = add, 1 = multiply |
+| `wdata` | in | 24-bit write data |
+| `rdata` | out | 24-bit read data |
+| `ready` | out | Handshake / transaction complete |
 
-## Architecture
+## Test Structure — Three Phases
 
-The testbench follows a layered, object-oriented verification architecture:
+1. **After-reset phase** — a batch of read-only transactions across random addresses to confirm every location holds the reset value.
+2. **Main phase** — a large batch (6000) of fully randomized read/write/accumulate transactions, with weighted `dist` constraints biasing toward interesting corner cases (address/data edges, one-hot patterns, alternating bit patterns, mid-range boundaries, one-byte-set values).
+3. **Final phase** — a closing batch of read-only transactions to confirm the DUT's memory holds the correct final values after all writes/accumulates.
 
-```
-┌─────────────┐     mailbox      ┌─────────────┐
-│  Generator  │ ───────────────► │   Driver    │
-└─────────────┘   (Transaction)  └──────┬──────┘
-                                        │ drives
-                                 ┌──────▼──────┐
-                                 │  DUT (ALU)  │
-                                 └──────┬──────┘
-                                        │ observes
-                                 ┌──────▼──────┐     mailbox      ┌─────────────┐
-                                 │   Monitor   │ ───────────────► │ Scoreboard  │
-                                 └─────────────┘   (SampleItem)   └─────────────┘
-                                        │
-                                 ┌──────▼──────┐
-                                 │  Coverage   │
-                                 │  (CG in     │
-                                 │   Monitor)  │
-                                 └─────────────┘
-```
+## Verification Components
 
-### Components
+- **`reg_tr`** — randomized transaction class with weighted `dist` constraints on `addr` and `wdata`.
+- **`generator`** — drives the three-phase test sequence described above.
+- **`driver`** — drives transactions into the DUT and manages the `sel`/`ready` handshake, with a timeout safety net.
+- **`monitor`** — samples completed handshakes, forwards them to coverage and the checker.
+- **`cov_comp`** — functional coverage component covering address bins, write-enable, accumulate/function bits, write-data bins, read-data bins, and a wide cross-coverage point.
+- **`checker`** — scoreboard with an internal reference memory model that replicates the DUT's accumulate-add/accumulate-multiply behavior and checks every read against it.
+- **SVA assertions** — verify the `ready` handshake protocol: `ready` never asserts while `sel` is low, and `ready` must arrive within a bounded number of cycles after `sel` rises.
 
-- **Transaction** — Randomized stimulus object: `opcode`, `operand1`, `operand2`
-- **Generator** — Produces N randomized transactions and pushes them to the driver via mailbox
-- **Driver** — Receives transactions and drives the ALU interface on every clock edge
-- **Monitor** — Samples the interface after each clock, packages results into `SampleItem`, forwards to scoreboard, and samples the functional coverage covergroup
-- **Scoreboard** — Computes expected results using a reference model and compares against DUT output; reports PASS/FAIL per transaction and a final summary
-- **Environment** — Top-level container that builds and connects all components; runs them in parallel using `fork...join`
+## Bugs Found & Fixed
 
----
+An earlier version of this testbench was reviewed for gaps against the assignment requirements. Four issues were identified and fixed in this version:
 
-## Functional Coverage
-
-The covergroup is defined inside the `Monitor` class and auto-sampled on `posedge clk`.
-
-| Coverpoint | What It Measures |
-|---|---|
-| `opcodes_cp` | All 4 opcodes hit individually (ADD, SUB, MULT, DIV) |
-| `operand1_cp` | Special operand1 values: max negative, zero, max positive, other |
-| `opcodes_adv_cp` | Opcode groupings and transitions (ADD→SUB sequence) |
-| `div_by_zero_cp` | Division by zero corner case |
-| `op_x_operand1_cp` | Cross coverage: every opcode × every operand1 category |
-
----
+1. **Directed stimulus instead of pure randomization** — the original generator hard-coded specific address/data values to hit coverage bins, which violated the "pseudo-random only" requirement. Fixed by moving to weighted `dist` constraints inside the `reg_tr` class, so bins are hit through biased randomization instead of hard-coding.
+2. **Incomplete coverage of write-data patterns** — some data patterns required by the coverage bins (e.g. specific one-byte-set values) were never actually generated by the original stimulus, leaving silent coverage holes. Fixed by adding those values into the `wdata` `dist` constraint.
+3. **Missing scoreboard / reference model** — the original testbench only collected coverage and never checked whether the DUT's outputs were actually correct. Fixed by adding the `checker` class with a full memory reference model, including accumulate-add and accumulate-multiply behavior, checked on every read.
+4. **`ready` signal only waited on, never formally checked** — the original driver simply polled `ready` without verifying it followed the expected protocol. Fixed by adding SVA assertions that check `ready` never asserts without `sel`, and that it always arrives within a bounded number of cycles.
 
 ## Files
 
 | File | Description |
-|------|-------------|
-| `alu_tb.sv` | Complete testbench source (DUT + TB environment) |
-
----
+|---|---|
+| `tb.sv` | Complete testbench source (transaction, generator, driver, monitor, checker, coverage, assertions, and DUT instantiation) |
 
 ## How to Run
 
-### Using VCS (Synopsys)
-
-```bash
-# Compile
-vlogan alu_tb.sv -sverilog
-
-# Elaborate and simulate
-vcs tb_top -sv
-
-# Run
+**Using VCS (Synopsys):**
+```
+vlogan tb.sv -sverilog
+vcs tb
 ./simv
 ```
 
-### Using ModelSim / QuestaSim
-
-```bash
-vlog alu_tb.sv
-vsim -c tb_top -do "run -all; quit"
+**Using ModelSim / QuestaSim:**
 ```
-
----
-
-## Sample Output
-
+vlog tb.sv
+vsim -c tb -do "run -all; quit"
 ```
-PART1 SUMMARY: PASS=1000 FAIL=0
-✓ PART1 OK
-
----- FUNCTIONAL COVERAGE ----
-TOTAL CG             = 100.00%
-opcodes_cp           = 100.00%
-operand1_cp          = 100.00%
-opcodes_adv_cp       = 100.00%
-div_by_zero_cp       = 100.00%
-op_x_operand1_cp     = 100.00%
-```
-
----
-
-## Key Design Decisions
-
-- **No hardcoded values** — all stimulus is generated via `tr.randomize()` with no directed test cases
-- **Reference model** — the scoreboard independently computes expected results using sign-extended arithmetic to match the DUT behavior exactly
-- **Divide-by-zero safety** — both DUT and reference model return `64'd0` when dividing by zero, and this corner case is explicitly tracked in coverage
-- **1 GHz clock** — 0.5 ns half-period; `#0` delay after clock edge lets combinational logic settle before sampling
-
----
-
-## Author
-
-**[Tala Alhendi]**  
-Computer Engineering — An-Najah National University
